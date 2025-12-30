@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.asset_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -55,17 +55,16 @@ jobs:
           go-version: '1.21'
 
       - name: Build
+        # 强制所有平台使用 bash，解决 Windows 下的 ParserError
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          if [ "$GOOS" = "windows" ]; then
-            go build -o dist/${{ matrix.asset_name }} -ldflags="-s -w" .
-          else
-            go build -o dist/${{ matrix.asset_name }} -ldflags="-s -w" .
-          fi
+          # 直接使用 matrix 中的 asset_name，无需写 if 判断
+          go build -o dist/${{ matrix.asset_name }} -ldflags="-s -w" .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -87,10 +86,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+          # v4 必须开启此项，否则文件会被分别放在子文件夹内导致无法校验
+          merge-multiple: true
 
       - name: Generate checksums
         run: |
           cd dist
+          # 此时所有二进制文件都在 dist 根目录
           sha256sum * > SHA256SUMS.txt
 
       - name: Create Release
