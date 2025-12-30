@@ -1,0 +1,36 @@
+# Binaries
+jwt_cli
+jwt_cli.exe
+
+# Build files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Vendor directory
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wordlist (optional - comment out if you want to include it)
+# wordlist.txt
