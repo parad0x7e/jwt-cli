@@ -2,6 +2,23 @@
 
 JWT命令行工具 - 解密、生成和爆破JWT令牌
 
+## 更新日志
+
+### v1.0.1 (2024-12-31)
+**Bug 修复：**
+- 修复 Windows PowerShell 解析 JSON 时键名引号丢失的问题
+- 修复 Windows 换行符（CRLF）导致字典爆破失败的问题
+- 修复 crack 命令强制要求字典文件的问题，现在支持使用内置字典
+- sign 命令的 `-p` 参数现在支持从 `.json` 和 `.txt` 文件读取
+
+**改进：**
+- 所有平台统一使用单引号包裹 JSON 的用法
+- 错误提示更加友好，明确区分 CMD、PowerShell 和 Linux/Mac 的用法
+- 帮助信息更加清晰
+
+### v1.0.0
+- 初始版本
+
 ## 功能特性
 
 - **decode** - 解密JWT并自动验证/爆破密钥（内置84个常见密码）
@@ -62,7 +79,7 @@ jwt_cli sign [选项]
 ```
 
 **选项：**
-- `-p <json>` - JWT载荷（必需），JSON格式
+- `-p <json|文件>` - JWT载荷（必需），支持JSON字符串或.json/.txt文件
 - `-s <密钥>` - 签名密钥（默认：secret）
 - `-a <算法>` - 签名算法（默认：HS256）
 
@@ -70,8 +87,11 @@ jwt_cli sign [选项]
 
 **示例：**
 ```bash
-# 基本用法
+# 基本用法（推荐：所有平台通用）
 jwt_cli sign -p '{"sub":"user123","name":"Admin"}'
+
+# 从文件读取（Windows CMD 用户）
+jwt_cli sign -p payload.json
 
 # 自定义密钥和算法
 jwt_cli sign -s mykey -a HS512 -p '{"user":"admin"}'
@@ -89,10 +109,22 @@ jwt_cli crack [jwt_token] [选项]
 ```
 
 **选项：**
-- `-w <文件>` - 密码字典文件（必需）
+- `-w <文件>` - 密码字典文件（可选，不指定则使用内置84个常见弱密码）
 - `-t <线程数>` - 并发线程数（默认：1）
 
 **注意：** 仅支持HMAC系列算法（HS256/HS384/HS512）
+
+**示例：**
+```bash
+# 使用内置字典
+jwt_cli crack <token>
+
+# 使用外部字典
+jwt_cli crack <token> -w wordlist.txt
+
+# 多线程爆破
+jwt_cli crack <token> -w rockyou.txt -t 16
+```
 
 ## 内置密码列表
 

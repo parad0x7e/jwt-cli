@@ -45,14 +45,15 @@ var signCmd = &cobra.Command{
 	Long: `生成JWT令牌
 
 参数：
-  -p <json>      JWT载荷（必需），JSON格式
-  -s <密钥>      签名密钥（默认：secret）
-  -a <算法>      签名算法（默认：HS256）
+  -p <json|文件> JWT载荷（必需），支持JSON字符串或.json/.txt文件
+  -s <密钥>       签名密钥（默认：secret）
+  -a <算法>       签名算法（默认：HS256）
 
 支持算法：HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384, ES512
 
 示例：
   jwt_cli sign -p '{"sub":"user123","name":"Admin"}'
+  jwt_cli sign -p payload.json
   jwt_cli sign -s mykey -p '{"user":"admin"}'
   jwt_cli sign -a HS512 -p '{"sub":"user123","exp":9999999999}'`,
 	Run: func(cmd *cobra.Command, args []string) {
@@ -69,14 +70,15 @@ var crackCmd = &cobra.Command{
 	Long: `使用字典爆破JWT密钥
 
 参数：
-  -w <文件>      密码字典文件（必需）
+  -w <文件>      密码字典文件（可选，不指定则使用内置84个常见弱密码）
   -t <线程数>    并发线程数（默认：1）
 
 仅支持HMAC系列算法（HS256/HS384/HS512）
 
 示例：
-  jwt_cli crack <token> -w wordlist.txt
-  jwt_cli crack <token> -w rockyou.txt -t 16`,
+  jwt_cli crack <token>                          # 使用内置字典
+  jwt_cli crack <token> -w wordlist.txt          # 使用外部字典
+  jwt_cli crack <token> -w rockyou.txt -t 16     # 多线程爆破`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		token := args[0]
@@ -95,11 +97,11 @@ func init() {
 	// sign命令的参数
 	signCmd.Flags().StringP("secret", "s", "secret", "签名密钥")
 	signCmd.Flags().StringP("algorithm", "a", "HS256", "签名算法")
-	signCmd.Flags().StringP("payload", "p", "", "JWT载荷（JSON格式，必需）")
+	signCmd.Flags().StringP("payload", "p", "", "JWT载荷（JSON字符串或.json/.txt文件）")
 	signCmd.MarkFlagRequired("payload")
 
 	// crack命令的参数
-	crackCmd.Flags().StringP("wordlist", "w", "", "密码字典文件（必需）")
+	crackCmd.Flags().StringP("wordlist", "w", "", "密码字典文件（不指定则使用内置字典）")
 	crackCmd.Flags().IntP("threads", "t", 1, "并发线程数")
 
 	rootCmd.AddCommand(decodeCmd)

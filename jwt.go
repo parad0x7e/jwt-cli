@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -179,13 +181,105 @@ func DecodeJWT(tokenString, secret, wordlist string, threads int) {
 	crackJWTQuietWithList(tokenString, defaultWordlist, threads, true)
 }
 
+// fixJSON 尝试修复无引号键名的JSON（PowerShell兼容）
+func fixJSON(s string) string {
+	// 模式1: 匹配键名后跟冒号，如 exp: 或 username:
+	keyPattern := regexp.MustCompile(`(\w+):`)
+	replaced := keyPattern.ReplaceAllString(s, `"$1":`)
+
+	// 模式2: 匹配字符串值（冒号后的非逗号、非大括号内容）
+	// exp: 1767197809 -> "exp": 1767197809 (数字不需要引号)
+	// username: snow -> "username": "snow" (字符串需要引号)
+	valuePattern := regexp.MustCompile(`:\s*([a-zA-Z_][a-zA-Z0-9_]*)`)
+	replaced = valuePattern.ReplaceAllString(replaced, `: "$1"`)
+
+	return replaced
+}
+
 // GenerateJWT 生成JWT令牌
 func GenerateJWT(secret, algorithm, payloadStr string) {
-	// 解析payload
+	original := payloadStr
+	payloadStr = strings.TrimSpace(payloadStr)
+
+	// 检查是否是文件路径（以 .json 或 .txt 结尾，或包含文件分隔符）
+	if strings.HasSuffix(strings.ToLower(payloadStr), ".json") ||
+		strings.HasSuffix(strings.ToLower(payloadStr), ".txt") ||
+		strings.Contains(payloadStr, "/") || strings.Contains(payloadStr, "\\") {
+		// 从文件读取
+		content, err := os.ReadFile(payloadStr)
+		if err == nil {
+			payloadStr = strings.TrimSpace(string(content))
+		}
+	}
+
+	// 检测 Windows CMD 截断问题
+	// CMD 会把单引号内的双引号当作参数分隔符，导致内容被截断
+	// 例如：'{"exp":123}' 会被截断为 '{exp:'
+	isTruncated := false
+	if len(payloadStr) < 50 && strings.Contains(payloadStr, ":") && !strings.HasSuffix(payloadStr, "}") {
+		// 尝试从标准输入读取（管道）
+		stat, _ := os.Stdin.Stat()
+		if (stat.Mode()&os.ModeCharDevice) == 0 {
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				input := strings.TrimSpace(scanner.Text())
+				if input != "" && len(input) > len(payloadStr) {
+					payloadStr = input
+					isTruncated = true
+				}
+			}
+		}
+	}
+
+	// 清理引号：递归去掉外层的单引号或双引号
+	for len(payloadStr) >= 2 {
+		firstChar := payloadStr[0]
+		lastChar := payloadStr[len(payloadStr)-1]
+		if (firstChar == '\'' && lastChar == '\'') || (firstChar == '"' && lastChar == '"') {
+			payloadStr = strings.TrimSpace(payloadStr[1 : len(payloadStr)-1])
+		} else {
+			break
+		}
+	}
+
+	// 处理转义的双引号
+	payloadStr = strings.ReplaceAll(payloadStr, "\\\"", "\"")
+
+	// 查找 JSON 内容的开始位置
+	if !strings.HasPrefix(payloadStr, "{") && !strings.HasPrefix(payloadStr, "[") {
+		if idx := strings.Index(payloadStr, "{"); idx >= 0 {
+			payloadStr = payloadStr[idx:]
+		} else if idx := strings.Index(payloadStr, "["); idx >= 0 {
+			payloadStr = payloadStr[idx:]
+		}
+	}
+
+	// 尝试直接解析
 	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
-		fmt.Printf("错误: 无效的JSON格式: %v\n", err)
-		fmt.Println("示例: {\"sub\":\"user123\",\"name\":\"John Doe\"}")
+	err := json.Unmarshal([]byte(payloadStr), &payload)
+
+	// 如果解析失败，尝试自动修复（PowerShell兼容）
+	if err != nil {
+		fixed := fixJSON(payloadStr)
+		err2 := json.Unmarshal([]byte(fixed), &payload)
+		if err2 == nil {
+			payloadStr = fixed
+			err = nil
+		}
+	}
+
+	// 如果还是失败，报错
+	if err != nil {
+		fmt.Printf("错误: 无效的JSON格式\n")
+		if !isTruncated && len(original) < 100 {
+			fmt.Printf("收到的内容: %q\n", original)
+		}
+		fmt.Printf("解析错误: %v\n", err)
+		fmt.Println("\n用法：")
+		fmt.Println("  PowerShell: jwt_cli sign -p '{\"exp\":123,\"user\":\"test\"}' -s secret")
+		fmt.Println("  CMD用户:   echo {\"exp\":123,\"user\":\"test\"} > payload.txt")
+		fmt.Println("             jwt_cli sign -p payload.txt -s secret")
+		fmt.Println("  Linux/Mac: jwt_cli sign -p '{\"exp\":123,\"user\":\"test\"}' -s secret")
 		return
 	}
 
@@ -245,19 +339,38 @@ func CrackJWT(tokenString, wordlistPath string, threads int) {
 		return
 	}
 
-	// 读取字典文件
-	wordlist, err := os.ReadFile(wordlistPath)
-	if err != nil {
-		fmt.Printf("错误: 读取字典文件失败: %v\n", err)
-		return
-	}
+	// 获取密码字典
+	var passwords []string
+	var dictSource string
 
-	passwords := strings.Split(string(wordlist), "\n")
+	if wordlistPath == "" {
+		// 使用内置字典
+		passwords = defaultWordlist
+		dictSource = "内置字典"
+	} else {
+		// 读取字典文件
+		wordlist, err := os.ReadFile(wordlistPath)
+		if err != nil {
+			fmt.Printf("错误: 读取字典文件失败: %v\n", err)
+			return
+		}
+
+		// 处理Windows换行符问题：统一处理 \r\n 和 \n
+		lines := strings.Split(string(wordlist), "\n")
+		for _, line := range lines {
+			// 去除 \r (Windows CRLF) 和首尾空白
+			line = strings.TrimSpace(line)
+			if line != "" {
+				passwords = append(passwords, line)
+			}
+		}
+		dictSource = wordlistPath
+	}
 	total := len(passwords)
 
 	fmt.Printf("\n=== JWT密钥爆破 ===\n")
 	fmt.Printf("算法: %s\n", header.Alg)
-	fmt.Printf("字典: %s (%d个密码)\n", wordlistPath, total)
+	fmt.Printf("字典: %s (%d个密码)\n", dictSource, total)
 	fmt.Printf("线程数: %d\n\n", threads)
 
 	// 验证算法是否支持
